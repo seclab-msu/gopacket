@@ -676,6 +676,12 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 			seq = seq.Add(1)
 			half.nextSeq = seq
 			action.queue = false
+		} else if t.RST && t.ACK && rev.nextSeq == ack {
+			if *debugLog {
+				log.Printf("%v saw RST packet, connection refused, seq=%v", key, seq)
+			}
+			half.nextSeq = seq
+			action.queue = false
 		} else if a.start {
 			if *debugLog {
 				log.Printf("%v start forced", key)
