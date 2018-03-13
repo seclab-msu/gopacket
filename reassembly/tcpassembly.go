@@ -114,6 +114,7 @@ type byteContainer interface {
 	release(*pageCache) int
 	isStart() bool
 	isEnd() bool
+	isFinal() bool
 	getSeq() Sequence
 	isPacket() bool
 }
@@ -226,13 +227,13 @@ func (dir TCPFlowDirection) Reverse() TCPFlowDirection {
 // avoids memory allocation.  Used pages are stored in a doubly-linked list in
 // a connection.
 type page struct {
-	bytes      []byte
-	seq        Sequence
-	prev, next *page
-	buf        [pageBytes]byte
-	ac         AssemblerContext // only set for the first page of a packet
-	seen       time.Time
-	start, end bool
+	bytes             []byte
+	seq               Sequence
+	prev, next        *page
+	buf               [pageBytes]byte
+	ac                AssemblerContext // only set for the first page of a packet
+	seen              time.Time
+	start, end, final bool
 }
 
 func (p *page) getBytes() []byte {
@@ -265,6 +266,9 @@ func (p *page) isStart() bool {
 func (p *page) isEnd() bool {
 	return p.end
 }
+func (p *page) isFinal() bool {
+	return p.final
+}
 func (p *page) getSeq() Sequence {
 	return p.seq
 }
@@ -280,6 +284,7 @@ type livePacket struct {
 	bytes []byte
 	start bool
 	end   bool
+	final bool
 	ci    gopacket.CaptureInfo
 	ac    AssemblerContext
 	seq   Sequence
@@ -302,6 +307,9 @@ func (lp *livePacket) isStart() bool {
 }
 func (lp *livePacket) isEnd() bool {
 	return lp.end
+}
+func (lp *livePacket) isFinal() bool {
+	return lp.final
 }
 func (lp *livePacket) getSeq() Sequence {
 	return lp.seq
@@ -328,6 +336,7 @@ func (lp *livePacket) convertToPages(pc *pageCache, skip int, ac AssemblerContex
 		bytes = bytes[length:]
 		if len(bytes) == 0 {
 			current.end = lp.isEnd()
+			current.final = lp.isFinal()
 			current.next = nil
 			break
 		}
@@ -358,7 +367,7 @@ func (lp *livePacket) release(*pageCache) int {
 //    3) Call ReassemblyComplete one time, after which the stream is dereferenced by assembly.
 type Stream interface {
 	// Tell whether the TCP packet should be accepted, start could be modified to force a start even if no SYN have been seen
-	Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir TCPFlowDirection, ackSeq Sequence, start *bool, ac AssemblerContext) bool
+	Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir TCPFlowDirection, ackSeq Sequence, start *bool, ac AssemblerContext) (bool, bool)
 
 	// ReassembledSG is called zero or more times.
 	// ScatterGather is reused after each Reassembled call,
@@ -647,7 +656,8 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 		half.lastSeen = timestamp
 	}
 	a.start = half.nextSeq == invalidSequence && t.SYN
-	if !half.stream.Accept(t, ci, half.dir, rev.ackSeq, &a.start, ac) {
+	ok, final := half.stream.Accept(t, ci, half.dir, rev.ackSeq, &a.start, ac)
+	if !ok {
 		if *debugLog {
 			log.Printf("Ignoring packet")
 		}
@@ -707,7 +717,7 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 		}
 	}
 
-	action = a.handleBytes(bytes, seq, half, ci, t.SYN, t.RST || t.FIN, action, ac)
+	action = a.handleBytes(bytes, seq, half, ci, t.SYN, t.RST || t.FIN, final, action, ac)
 	if len(a.ret) > 0 {
 		action.nextSeq = a.sendToConnection(conn, half, ac)
 	}
@@ -942,10 +952,11 @@ func (a *Assembler) overlapExisting(half *halfconnection, start, end Sequence, b
 }
 
 // Prepare send or queue
-func (a *Assembler) handleBytes(bytes []byte, seq Sequence, half *halfconnection, ci gopacket.CaptureInfo, start bool, end bool, action assemblerAction, ac AssemblerContext) assemblerAction {
+func (a *Assembler) handleBytes(bytes []byte, seq Sequence, half *halfconnection, ci gopacket.CaptureInfo, start bool, end bool, final bool, action assemblerAction, ac AssemblerContext) assemblerAction {
 	a.cacheLP.bytes = bytes
 	a.cacheLP.start = start
 	a.cacheLP.end = end
+	a.cacheLP.final = final
 	a.cacheLP.seq = seq
 	a.cacheLP.ci = ci
 	a.cacheLP.ac = ac
@@ -964,7 +975,7 @@ func (a *Assembler) handleBytes(bytes []byte, seq Sequence, half *halfconnection
 	} else {
 		a.cacheLP.bytes, a.cacheLP.seq = a.overlapExisting(half, seq, seq.Add(len(bytes)), a.cacheLP.bytes)
 		a.checkOverlap(half, false, ac)
-		if len(a.cacheLP.bytes) != 0 || end || start {
+		if len(a.cacheLP.bytes) != 0 || end || start || final {
 			a.ret = append(a.ret, &a.cacheLP)
 		}
 		a.dump("handleBytes after no queue", half)
@@ -1003,7 +1014,7 @@ func (a *Assembler) buildSG(half *halfconnection) (bool, Sequence) {
 	a.cacheSG.toKeep = -1
 	a.setStatsToSG(half)
 	a.dump("after buildSG", half)
-	return a.ret[len(a.ret)-1].isEnd(), nextSeq
+	return a.ret[len(a.ret)-1].isFinal(), nextSeq
 }
 
 func (a *Assembler) cleanSG(half *halfconnection, ac AssemblerContext) {
@@ -1082,11 +1093,12 @@ func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, ac 
 	if *debugLog {
 		log.Printf("sendToConnection\n")
 	}
-	end, nextSeq := a.buildSG(half)
+	final, nextSeq := a.buildSG(half)
 	half.stream.ReassembledSG(&a.cacheSG, ac)
 	a.cleanSG(half, ac)
-	if end {
-		a.closeHalfConnection(conn, half)
+	if final {
+		a.closeHalfConnection(conn, &conn.s2c)
+		a.closeHalfConnection(conn, &conn.c2s)
 	}
 	if *debugLog {
 		log.Printf("after sendToConnection: nextSeq: %d\n", nextSeq)

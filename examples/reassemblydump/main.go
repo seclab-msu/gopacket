@@ -325,7 +325,7 @@ type tcpStream struct {
 	ident          string
 }
 
-func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, acked reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) bool {
+func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, acked reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) (bool, bool) {
 	// FSM
 	if !t.tcpstate.CheckState(tcp, dir) {
 		Error("FSM", "%s: Packet rejected by FSM (state:%s)\n", t.ident, t.tcpstate.String())
@@ -335,7 +335,7 @@ func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassem
 			stats.rejectConnFsm++
 		}
 		if !*ignorefsmerr {
-			return false
+			return false, false
 		}
 	}
 	// Options
@@ -344,7 +344,7 @@ func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassem
 		Error("OptionChecker", "%s: Packet rejected by OptionChecker: %s\n", t.ident, err)
 		stats.rejectOpt++
 		if !*nooptcheck {
-			return false
+			return false, false
 		}
 	}
 	// Checksum
@@ -361,8 +361,13 @@ func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassem
 	}
 	if !accept {
 		stats.rejectOpt++
+		return false, false
 	}
-	return accept
+	state := t.tcpstate.GetState()
+	if state == reassembly.TCPStateClosed || state == reassembly.TCPStateReset {
+		return true, true
+	}
+	return true, false
 }
 
 func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
@@ -454,8 +459,7 @@ func (t *tcpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
 		close(t.client.bytes)
 		close(t.server.bytes)
 	}
-	// do not remove the connection to allow last ACK
-	return false
+	return true
 }
 
 func main() {
@@ -608,6 +612,7 @@ func main() {
 		}
 	}
 
+	livingSessionsBeforeFlush := streamPool.GetRemainingConnectionCount()
 	closed := assembler.FlushAll()
 	Debug("Final flush: %d closed", closed)
 	if outputLevel >= 2 {
@@ -644,6 +649,7 @@ func main() {
 	fmt.Printf(" overlap packets:\t%d\n", stats.overlapPackets)
 	fmt.Printf(" overlap bytes:\t\t%d\n", stats.overlapBytes)
 	fmt.Printf("Errors: %d\n", errors)
+	fmt.Printf("Sessions left before flush: %d\n", livingSessionsBeforeFlush)
 	for e, _ := range errorsMap {
 		fmt.Printf(" %s:\t\t%d\n", e, errorsMap[e])
 	}
