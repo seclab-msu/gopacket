@@ -168,6 +168,12 @@ func (p *StreamPool) Dump() {
 	}
 }
 
+func (p *StreamPool) GetRemainingConnectionCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.conns)
+}
+
 func (p *StreamPool) remove(conn *connection) {
 	p.mu.Lock()
 	if _, ok := p.conns[conn.key]; ok {
