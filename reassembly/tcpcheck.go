@@ -163,6 +163,10 @@ func (t *TCPSimpleFSM) String() string {
 	return "?"
 }
 
+func (t *TCPSimpleFSM) GetState() int {
+	return t.state
+}
+
 // CheckState returns false if tcp is invalid wrt current state or update the state machine's state
 func (t *TCPSimpleFSM) CheckState(tcp *layers.TCP, dir TCPFlowDirection) bool {
 	if t.state == TCPStateClosed && t.options.SupportMissingEstablishment && !(tcp.SYN && !tcp.ACK) {
