@@ -8,7 +8,7 @@ package layers
 
 import (
 	"encoding/binary"
-	"github.com/google/gopacket"
+	"github.com/seclab-msu/gopacket"
 )
 
 // EAPOL defines an EAP over LAN (802.1x) layer.

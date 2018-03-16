@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/gopacket"
+	"github.com/seclab-msu/gopacket"
 )
 
 // EnumMetadata keeps track of a set of metadata for each enumeration value
