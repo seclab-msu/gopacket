@@ -699,7 +699,7 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 		queue:   true,
 	}
 	a.dump("AssembleWithContext()", half)
-	if half.nextSeq == invalidSequence {
+	if half.nextSeq == invalidSequence || t.SYN {
 		if t.SYN {
 			if *debugLog {
 				log.Printf("%v saw first SYN packet, returning immediately, seq=%v", key, seq)
