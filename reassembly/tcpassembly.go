@@ -1097,7 +1097,9 @@ func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, ac 
 	half.stream.ReassembledSG(&a.cacheSG, ac)
 	a.cleanSG(half, ac)
 	if final {
+		a.skipFlush(conn, &conn.s2c)
 		a.closeHalfConnection(conn, &conn.s2c)
+		a.skipFlush(conn, &conn.c2s)
 		a.closeHalfConnection(conn, &conn.c2s)
 	}
 	if *debugLog {
