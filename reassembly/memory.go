@@ -243,6 +243,10 @@ func (p *StreamPool) getConnection(k key, end bool, ts time.Time, tcp *layers.TC
 	if end || conn != nil {
 		return conn, half, rev
 	}
+	if !tcp.SYN && len(tcp.Payload) == 0 {
+		return nil, nil, nil
+	}
+
 	s := p.factory.New(k[0], k[1], tcp, ac)
 	p.mu.Lock()
 	defer p.mu.Unlock()
