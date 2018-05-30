@@ -1119,7 +1119,6 @@ func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, ac 
 		a.skipFlush(conn, &conn.s2c)
 		a.closeHalfConnection(conn, &conn.s2c)
 		a.skipFlush(conn, &conn.c2s)
-		a.closeHalfConnection(conn, &conn.c2s)
 	}
 	if *debugLog {
 		log.Printf("after sendToConnection: nextSeq: %d\n", nextSeq)
