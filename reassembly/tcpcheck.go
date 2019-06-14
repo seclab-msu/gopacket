@@ -188,7 +188,7 @@ func (t *TCPSimpleFSM) CheckState(tcp *layers.TCP, dir TCPFlowDirection) bool {
 	switch t.state {
 	/* openning connection */
 	case TCPStateClosed:
-		if tcp.SYN && !tcp.ACK {
+		if tcp.SYN && !tcp.ACK && !tcp.RST {
 			t.dir = dir
 			t.state = TCPStateSynSent
 			return true
