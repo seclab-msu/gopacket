@@ -1116,9 +1116,7 @@ func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, ac 
 	half.stream.ReassembledSG(&a.cacheSG, ac)
 	a.cleanSG(half, ac)
 	if final {
-		a.skipFlush(conn, &conn.s2c)
-		a.closeHalfConnection(conn, &conn.s2c)
-		a.skipFlush(conn, &conn.c2s)
+		a.flushCloseConnection(conn)
 	}
 	if *debugLog {
 		log.Printf("after sendToConnection: nextSeq: %d\n", nextSeq)
@@ -1217,6 +1215,7 @@ func (a *Assembler) closeHalfConnection(conn *connection, half *halfconnection) 
 		a.pc.replace(p)
 		half.pages--
 	}
+
 	if conn.s2c.closed && conn.c2s.closed {
 		if half.stream.ReassemblyComplete(nil) { //FIXME: which context to pass ?
 			a.connPool.remove(conn)
@@ -1322,6 +1321,17 @@ func (a *Assembler) flushClose(conn *connection, half *halfconnection, t time.Ti
 	return flushed, closed
 }
 
+func (a *Assembler) flushCloseConnection(conn *connection) {
+	for _, half := range []*halfconnection{&conn.s2c, &conn.c2s} {
+		for !half.closed {
+			a.skipFlush(conn, half)
+		}
+		if !half.closed {
+			a.closeHalfConnection(conn, half)
+		}
+	}
+}
+
 // FlushAll flushes all remaining data into all remaining connections and closes
 // those connections. It returns the total number of connections flushed/closed
 // by the call.
@@ -1330,14 +1340,7 @@ func (a *Assembler) FlushAll() (closed int) {
 	closed = len(conns)
 	for _, conn := range conns {
 		conn.mu.Lock()
-		for _, half := range []*halfconnection{&conn.s2c, &conn.c2s} {
-			for !half.closed {
-				a.skipFlush(conn, half)
-			}
-			if !half.closed {
-				a.closeHalfConnection(conn, half)
-			}
-		}
+		a.flushCloseConnection(conn)
 		conn.mu.Unlock()
 	}
 	return
