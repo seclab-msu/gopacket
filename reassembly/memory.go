@@ -243,7 +243,7 @@ func (p *StreamPool) getConnection(k key, end bool, ts time.Time, tcp *layers.TC
 	if end || conn != nil {
 		return conn, half, rev
 	}
-	if !tcp.SYN && len(tcp.Payload) == 0 {
+	if tcp.RST || !tcp.SYN && len(tcp.Payload) == 0 {
 		return nil, nil, nil
 	}
 
