@@ -741,6 +741,9 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 	action = a.handleBytes(bytes, seq, half, ci, t.SYN, t.RST || t.FIN, final, action, ac)
 	if len(a.ret) > 0 {
 		action.nextSeq = a.sendToConnection(conn, half, ac)
+	} else if final {
+		a.flushCloseConnection(conn)
+		return
 	}
 	if action.nextSeq != invalidSequence {
 		half.nextSeq = action.nextSeq
