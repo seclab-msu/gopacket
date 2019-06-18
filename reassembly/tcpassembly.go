@@ -371,7 +371,7 @@ func (lp *livePacket) release(*pageCache) int {
 //    3) Call ReassemblyComplete one time, after which the stream is dereferenced by assembly.
 type Stream interface {
 	// Tell whether the TCP packet should be accepted, start could be modified to force a start even if no SYN have been seen
-	Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir TCPFlowDirection, nextSeq Sequence, start *bool, ac AssemblerContext) (bool, bool)
+	Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir TCPFlowDirection, nextSeq Sequence, start *bool, ac AssemblerContext) PacketDecision
 
 	// ReassembledSG is called zero or more times.
 	// ScatterGather is reused after each Reassembled call,
@@ -632,6 +632,14 @@ type assemblerAction struct {
 	queue   bool
 }
 
+type PacketDecision int
+
+const (
+	KeepDecision PacketDecision = iota
+	DropDecision
+	EndSessionDecision
+)
+
 // AssembleWithContext reassembles the given TCP packet into its appropriate
 // stream.
 //
@@ -674,13 +682,20 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 		}
 	}
 
-	ok, final := half.stream.Accept(t, ci, half.dir, half.nextSeq, &a.start, ac)
-	if !ok {
+	final := false
+
+	decision := half.stream.Accept(t, ci, half.dir, half.nextSeq, &a.start, ac)
+
+	switch decision {
+	case DropDecision:
 		if *debugLog {
 			log.Printf("Ignoring packet")
 		}
 		return
+	case EndSessionDecision:
+		final = true
 	}
+
 	if half.closed {
 		// this way is closed
 		if *debugLog {
