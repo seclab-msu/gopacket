@@ -638,6 +638,7 @@ const (
 	KeepDecision PacketDecision = iota
 	DropDecision
 	EndSessionDecision
+	StartNewSessionDecision
 )
 
 // AssembleWithContext reassembles the given TCP packet into its appropriate
@@ -687,6 +688,12 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 	decision := half.stream.Accept(t, ci, half.dir, half.nextSeq, &a.start, ac)
 
 	switch decision {
+	case StartNewSessionDecision:
+		a.flushCloseConnection(conn)
+		conn.mu.Unlock()
+		defer conn.mu.Lock()
+		a.AssembleWithContext(netFlow, t, ac)
+		return
 	case DropDecision:
 		if *debugLog {
 			log.Printf("Ignoring packet")
