@@ -611,6 +611,7 @@ func (a *Assembler) Dump() string {
 // AssemblerContext provides method to get metadata
 type AssemblerContext interface {
 	GetCaptureInfo() gopacket.CaptureInfo
+	GetTTL() int
 }
 
 // Implements AssemblerContext for Assemble()
@@ -618,6 +619,10 @@ type assemblerSimpleContext gopacket.CaptureInfo
 
 func (asc *assemblerSimpleContext) GetCaptureInfo() gopacket.CaptureInfo {
 	return gopacket.CaptureInfo(*asc)
+}
+
+func (asc *assemblerSimpleContext) GetTTL() int {
+	return -1
 }
 
 // Assemble calls AssembleWithContext with the current timestamp, useful for
