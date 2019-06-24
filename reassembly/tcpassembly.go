@@ -1354,14 +1354,28 @@ func (a *Assembler) flushClose(conn *connection, half *halfconnection, t time.Ti
 	return flushed, closed
 }
 
+func earlierHalf(x, y *halfconnection) *halfconnection {
+	if y.closed {
+		return x
+	}
+	if x.closed {
+		return y
+	}
+	if y.first == nil || y.first.ac == nil {
+		return x
+	}
+	if x.first == nil || x.first.ac == nil {
+		return y
+	}
+	if x.first.ac.GetCaptureInfo().Timestamp.Before(y.first.ac.GetCaptureInfo().Timestamp) {
+		return x
+	}
+	return y
+}
+
 func (a *Assembler) flushCloseConnection(conn *connection) {
-	for _, half := range []*halfconnection{&conn.s2c, &conn.c2s} {
-		for !half.closed {
-			a.skipFlush(conn, half)
-		}
-		if !half.closed {
-			a.closeHalfConnection(conn, half)
-		}
+	for !conn.s2c.closed || !conn.c2s.closed {
+		a.skipFlush(conn, earlierHalf(&conn.s2c, &conn.c2s))
 	}
 }
 
