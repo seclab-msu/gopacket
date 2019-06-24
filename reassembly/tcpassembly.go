@@ -161,12 +161,20 @@ func (rl *reassemblyObject) CaptureInfo(offset int) gopacket.CaptureInfo {
 	var r byteContainer
 	for _, r = range rl.all {
 		if current >= offset {
-			return r.captureInfo()
+			ac := r.assemblerContext()
+			if ac == nil {
+				continue
+			}
+			return ac.GetCaptureInfo()
 		}
 		current += r.length()
 	}
 	if r != nil && current >= offset {
-		return r.captureInfo()
+		ac := r.assemblerContext()
+		if ac == nil {
+			return gopacket.CaptureInfo{}
+		}
+		return ac.GetCaptureInfo()
 	}
 	// Invalid offset
 	return gopacket.CaptureInfo{}
