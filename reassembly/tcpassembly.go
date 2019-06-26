@@ -385,7 +385,7 @@ type Stream interface {
 	// ScatterGather is reused after each Reassembled call,
 	// so it's important to copy anything you need out of it,
 	// especially bytes (or use KeepFrom())
-	ReassembledSG(sg ScatterGather, ac AssemblerContext)
+	ReassembledSG(sg ScatterGather, flushing bool, ac AssemblerContext)
 
 	// ReassemblyComplete is called when assembly decides there is
 	// no more data for this Stream, either because a FIN or RST packet
@@ -770,7 +770,7 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 
 	action = a.handleBytes(bytes, seq, half, ci, t.SYN, t.RST || t.FIN, final, action, ac)
 	if len(a.ret) > 0 {
-		action.nextSeq = a.sendToConnection(conn, half, ac)
+		action.nextSeq = a.sendToConnection(conn, half, false, ac)
 	} else if final {
 		a.flushCloseConnection(conn)
 		return
@@ -1141,12 +1141,12 @@ func (a *Assembler) cleanSG(half *halfconnection, ac AssemblerContext) {
 
 // sendToConnection sends the current values in a.ret to the connection, closing
 // the connection if the last thing sent had End set.
-func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, ac AssemblerContext) Sequence {
+func (a *Assembler) sendToConnection(conn *connection, half *halfconnection, flushing bool, ac AssemblerContext) Sequence {
 	if *debugLog {
 		log.Printf("sendToConnection\n")
 	}
 	final, nextSeq := a.buildSG(half)
-	half.stream.ReassembledSG(&a.cacheSG, ac)
+	half.stream.ReassembledSG(&a.cacheSG, flushing, ac)
 	a.cleanSG(half, ac)
 	if final {
 		a.flushCloseConnection(conn)
@@ -1232,7 +1232,7 @@ func (a *Assembler) skipFlush(conn *connection, half *halfconnection) {
 	}
 	a.ret = a.ret[:0]
 	a.addNextFromConn(half)
-	nextSeq := a.sendToConnection(conn, half, a.ret[0].assemblerContext())
+	nextSeq := a.sendToConnection(conn, half, true, a.ret[0].assemblerContext())
 	if nextSeq != invalidSequence {
 		half.nextSeq = nextSeq
 	}
