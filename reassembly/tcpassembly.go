@@ -781,6 +781,14 @@ func (a *Assembler) AssembleWithContext(netFlow gopacket.Flow, t *layers.TCP, ac
 			half.nextSeq = half.nextSeq.Add(1)
 		}
 	}
+	if a.MaxBufferedPagesTotal > 0 && a.pc.used >= a.MaxBufferedPagesTotal {
+		if *debugLog {
+			log.Printf("hit global max buffer size: %+v, %v", a.AssemblerOptions, a.pc.used)
+		}
+		conn.mu.Unlock()
+		defer conn.mu.Lock()
+		a.flushOldestConnectionWithPages()
+	}
 	if *debugLog {
 		log.Printf("%v nextSeq:%d", key, half.nextSeq)
 	}
@@ -1003,6 +1011,50 @@ func (a *Assembler) overlapExisting(half *halfconnection, start, end Sequence, b
 	return bytes, half.nextSeq
 }
 
+func (a *Assembler) findOldestConnectionWithPages() (time.Time, *connection, *halfconnection) {
+	var (
+		minTime time.Time
+		minConn *connection
+		minHalf *halfconnection
+	)
+	conns := a.connPool.connections()
+	for _, conn := range conns {
+		conn.mu.Lock()
+		for _, half := range []*halfconnection{&conn.c2s, &conn.s2c} {
+			if half.pages != 0 && (minHalf == nil || half.lastSeen.Before(minTime)) {
+				minConn = conn
+				minHalf = half
+				minTime = half.lastSeen
+			}
+		}
+		conn.mu.Unlock()
+	}
+	return minTime, minConn, minHalf
+}
+
+func (a *Assembler) flushOldestConnectionWithPages() {
+	minTime, oldestConn, oldestHalf := a.findOldestConnectionWithPages()
+
+	if oldestHalf == nil {
+		return
+	}
+
+	oldestConn.mu.Lock()
+	defer oldestConn.mu.Unlock()
+
+	if oldestHalf.pages == 0 || oldestHalf.lastSeen != minTime || (&oldestConn.c2s != oldestHalf && &oldestConn.s2c != oldestHalf) {
+		// too bad: someone changed connection while we were not holding its lock
+		return
+	}
+
+	a.ret = a.ret[:0]
+	a.addNextFromConn(oldestHalf)
+	nextSeq := a.sendToConnection(oldestConn, oldestHalf, true, a.ret[0].assemblerContext())
+	if nextSeq != invalidSequence {
+		oldestHalf.nextSeq = nextSeq
+	}
+}
+
 // Prepare send or queue
 func (a *Assembler) handleBytes(bytes []byte, seq Sequence, half *halfconnection, ci gopacket.CaptureInfo, start bool, end bool, final bool, action assemblerAction, ac AssemblerContext) assemblerAction {
 	a.cacheLP.bytes = bytes
@@ -1015,10 +1067,9 @@ func (a *Assembler) handleBytes(bytes []byte, seq Sequence, half *halfconnection
 
 	if action.queue {
 		a.checkOverlap(half, true, ac)
-		if (a.MaxBufferedPagesPerConnection > 0 && half.pages >= a.MaxBufferedPagesPerConnection) ||
-			(a.MaxBufferedPagesTotal > 0 && a.pc.used >= a.MaxBufferedPagesTotal) {
+		if a.MaxBufferedPagesPerConnection > 0 && half.pages >= a.MaxBufferedPagesPerConnection {
 			if *debugLog {
-				log.Printf("hit max buffer size: %+v, %v, %v", a.AssemblerOptions, half.pages, a.pc.used)
+				log.Printf("hit max buffer size for conn: %+v, %v, %v", a.AssemblerOptions, half.pages, a.pc.used)
 			}
 			action.queue = false
 			a.addNextFromConn(half)
